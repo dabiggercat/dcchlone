@@ -546,6 +546,15 @@
         let localStream = null;
         let peerConnections = {};
         let friendRequestListener = null;
+        let channelListener = null;
+
+        // WebRTC Configuration
+        const rtcConfiguration = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+        };
 
         // Authentication Functions
         async function signUp() {
@@ -648,6 +657,11 @@
             loadFriends();
             loadPendingRequests();
             setupFriendRequestListener();
+            
+            // Initialize channel user counts if Firebase is enabled
+            if (firebaseEnabled) {
+                updateChannelUserCounts();
+            }
         }
 
         function showError(message) {
@@ -894,23 +908,58 @@
             event.target.classList.add('active');
             
             document.getElementById('channel-title').textContent = `🔊 ${channelName.charAt(0).toUpperCase() + channelName.slice(1)}`;
-            document.getElementById('channel-description').textContent = `Connected to ${channelName} channel. You can talk with friends in this channel.`;
+            document.getElementById('channel-description').textContent = `Connecting to ${channelName} channel...`;
             document.getElementById('voice-section').classList.remove('hidden');
 
             try {
-                // Request microphone permission
-                localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                console.log('Requesting microphone access...');
+                
+                // Request microphone permission with better constraints
+                localStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                });
+                
+                console.log('Microphone access granted, local stream:', localStream);
                 isConnected = true;
                 
-                // Add user to channel in Firebase or demo mode
+                // Check if Firebase is enabled and configured
+                if (!firebaseEnabled) {
+                    document.getElementById('channel-description').textContent = 
+                        `Demo Mode: Visual simulation only. Configure Firebase for real voice chat.`;
+                    showError('Demo Mode: Real voice chat requires Firebase configuration. Check console for setup instructions.');
+                    simulateVoiceConnection();
+                    return;
+                }
+                
+                // Add user to channel in Firebase
                 await addUserToChannel(channelName);
                 
-                showSuccess(`Joined ${channelName} channel!`);
+                document.getElementById('channel-description').textContent = 
+                    `Connected to ${channelName} channel. Waiting for other users...`;
+                
+                showSuccess(`Joined ${channelName} channel! Microphone ready.`);
                 
                 // Start listening for other users in the channel
                 setupChannelListener(channelName);
+                
             } catch (error) {
-                showError('Microphone access denied. You need microphone permission for voice chat.');
+                console.error('Error joining channel:', error);
+                if (error.name === 'NotAllowedError') {
+                    showError('Microphone access denied. Please allow microphone access and try again.');
+                } else if (error.name === 'NotFoundError') {
+                    showError('No microphone found. Please connect a microphone and try again.');
+                } else {
+                    showError('Error accessing microphone: ' + error.message);
+                }
+                
+                // Reset UI
+                currentChannel = null;
+                document.getElementById('voice-section').classList.add('hidden');
+                document.querySelectorAll('.channel-item').forEach(item => item.classList.remove('active'));
             }
         }
 
@@ -929,6 +978,7 @@
                 } else {
                     // Demo mode - simulate joining channel
                     console.log(`Demo: ${currentUser.displayName} joined ${channelName}`);
+                    showError('Demo Mode: Real voice chat requires Firebase configuration and HTTPS hosting.');
                 }
             } catch (error) {
                 console.error('Error joining channel:', error);
@@ -938,14 +988,207 @@
 
         function setupChannelListener(channelName) {
             if (firebaseEnabled) {
+                // Clean up previous listener
+                if (channelListener) {
+                    channelListener.off();
+                }
+                
                 // Listen for users joining/leaving the channel
-                firebase.database().ref(`channels/${channelName}/users`).on('value', (snapshot) => {
+                channelListener = firebase.database().ref(`channels/${channelName}/users`);
+                channelListener.on('value', (snapshot) => {
                     const users = snapshot.val();
                     updateParticipantsList(users);
+                    handlePeerConnections(users);
                 });
+                
+                // Listen for WebRTC signaling
+                setupSignalingListener(channelName);
             } else {
                 // Demo mode - simulate other users in channel
                 simulateVoiceConnection();
+            }
+        }
+
+        async function handlePeerConnections(users) {
+            if (!users || !localStream) return;
+            
+            const userIds = Object.keys(users).filter(id => id !== currentUser.uid);
+            
+            // Create connections to new users
+            for (const userId of userIds) {
+                if (!peerConnections[userId]) {
+                    await createPeerConnection(userId);
+                }
+            }
+            
+            // Clean up connections for users who left
+            for (const userId of Object.keys(peerConnections)) {
+                if (!userIds.includes(userId)) {
+                    closePeerConnection(userId);
+                }
+            }
+        }
+
+        // Add debugging and better error handling for GitHub Pages
+        async function createPeerConnection(userId) {
+            try {
+                console.log(`Creating peer connection with user ${userId}`);
+                const peerConnection = new RTCPeerConnection(rtcConfiguration);
+                peerConnections[userId] = peerConnection;
+                
+                // Add local stream to peer connection
+                localStream.getTracks().forEach(track => {
+                    console.log(`Adding track to peer connection:`, track);
+                    peerConnection.addTrack(track, localStream);
+                });
+                
+                // Handle incoming audio stream
+                peerConnection.ontrack = (event) => {
+                    console.log(`Received remote stream from user ${userId}`);
+                    const [remoteStream] = event.streams;
+                    playRemoteAudio(remoteStream, userId);
+                };
+                
+                // Handle connection state changes
+                peerConnection.onconnectionstatechange = () => {
+                    console.log(`Connection state with ${userId}: ${peerConnection.connectionState}`);
+                    updateParticipantsList(null); // Refresh UI
+                    
+                    if (peerConnection.connectionState === 'connected') {
+                        showSuccess(`Voice connected to user!`);
+                    } else if (peerConnection.connectionState === 'failed') {
+                        showError(`Voice connection failed. Check your internet connection.`);
+                    }
+                };
+                
+                // Handle ICE candidates
+                peerConnection.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        console.log(`Sending ICE candidate to ${userId}`);
+                        sendSignalingMessage(userId, {
+                            type: 'ice-candidate',
+                            candidate: event.candidate
+                        });
+                    }
+                };
+                
+                // Handle ICE connection state
+                peerConnection.oniceconnectionstatechange = () => {
+                    console.log(`ICE connection state with ${userId}: ${peerConnection.iceConnectionState}`);
+                };
+                
+                // Create offer for new peer
+                console.log(`Creating offer for user ${userId}`);
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+                
+                sendSignalingMessage(userId, {
+                    type: 'offer',
+                    offer: offer
+                });
+                
+            } catch (error) {
+                console.error('Error creating peer connection:', error);
+                showError('Error establishing voice connection: ' + error.message);
+            }
+        }
+
+        function playRemoteAudio(stream, userId) {
+            // Remove existing audio element for this user
+            const existingAudio = document.getElementById(`audio-${userId}`);
+            if (existingAudio) {
+                existingAudio.remove();
+            }
+            
+            // Create new audio element
+            const audioElement = document.createElement('audio');
+            audioElement.id = `audio-${userId}`;
+            audioElement.srcObject = stream;
+            audioElement.autoplay = true;
+            audioElement.volume = 1.0;
+            audioElement.style.display = 'none';
+            document.body.appendChild(audioElement);
+            
+            // Handle audio playback issues
+            audioElement.oncanplay = () => {
+                console.log(`Audio ready to play from user ${userId}`);
+                audioElement.play().catch(e => {
+                    console.error('Error playing audio:', e);
+                    showError('Audio playback blocked. Click anywhere to enable audio.');
+                });
+            };
+            
+            audioElement.onerror = (e) => {
+                console.error('Audio error:', e);
+                showError('Audio playback error. Check browser permissions.');
+            };
+            
+            console.log(`Playing audio from user ${userId}`);
+        }
+
+        function setupSignalingListener(channelName) {
+            // Listen for WebRTC signaling messages
+            firebase.database().ref(`channels/${channelName}/signaling/${currentUser.uid}`).on('child_added', async (snapshot) => {
+                const message = snapshot.val();
+                await handleSignalingMessage(message);
+                
+                // Remove processed message
+                snapshot.ref.remove();
+            });
+        }
+
+        async function handleSignalingMessage(message) {
+            const { fromUserId, type, offer, answer, candidate } = message;
+            const peerConnection = peerConnections[fromUserId];
+            
+            if (!peerConnection) return;
+            
+            try {
+                switch (type) {
+                    case 'offer':
+                        await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+                        const answer_desc = await peerConnection.createAnswer();
+                        await peerConnection.setLocalDescription(answer_desc);
+                        
+                        sendSignalingMessage(fromUserId, {
+                            type: 'answer',
+                            answer: answer_desc
+                        });
+                        break;
+                        
+                    case 'answer':
+                        await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+                        break;
+                        
+                    case 'ice-candidate':
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+                        break;
+                }
+            } catch (error) {
+                console.error('Error handling signaling message:', error);
+            }
+        }
+
+        function sendSignalingMessage(toUserId, message) {
+            if (!firebaseEnabled || !currentChannel) return;
+            
+            firebase.database().ref(`channels/${currentChannel}/signaling/${toUserId}`).push({
+                ...message,
+                fromUserId: currentUser.uid,
+                timestamp: Date.now()
+            });
+        }
+
+        function closePeerConnection(userId) {
+            if (peerConnections[userId]) {
+                peerConnections[userId].close();
+                delete peerConnections[userId];
+                
+                // Remove audio element
+                const audioElement = document.getElementById(`audio-${userId}`);
+                if (audioElement) {
+                    audioElement.remove();
+                }
             }
         }
 
@@ -966,33 +1209,51 @@
             participantsList.innerHTML = userEntries.map(([userId, userData]) => {
                 const isCurrentUser = userId === currentUser.uid;
                 const muteIndicator = userData.isMuted ? '🔇' : '';
+                const connectionIndicator = !isCurrentUser && peerConnections[userId] && peerConnections[userId].connectionState === 'connected' ? '🔗' : '';
                 return `
                     <div class="participant ${userData.speaking ? 'speaking' : ''}">
                         <span class="status-online"></span>
-                        <span>${userData.displayName}${isCurrentUser ? ' (You)' : ''} ${muteIndicator}</span>
+                        <span>${userData.displayName}${isCurrentUser ? ' (You)' : ''} ${muteIndicator} ${connectionIndicator}</span>
                     </div>
                 `;
             }).join('');
+            
+            // Update connection status
+            if (firebaseEnabled) {
+                updateConnectionStatus();
+            }
         }
 
         function simulateVoiceConnection() {
-            // Simulate other friends joining occasionally
+            // In demo mode, simulate friends joining the same channel
             setTimeout(() => {
                 if (currentChannel && friends.length > 0) {
-                    const onlineFriends = friends.filter(f => f.online);
-                    if (onlineFriends.length > 0) {
-                        const randomFriend = onlineFriends[Math.floor(Math.random() * onlineFriends.length)];
-                        addParticipant(randomFriend.displayName);
-                    }
+                    // Simulate friends joining the channel
+                    const participantsList = document.getElementById('participants-list');
+                    const currentParticipants = Array.from(participantsList.children).map(p => 
+                        p.querySelector('span:last-child').textContent.replace(' (You)', '').replace(' 🔇', '')
+                    );
+                    
+                    friends.forEach((friend, index) => {
+                        if (friend.online && !currentParticipants.includes(friend.displayName)) {
+                            setTimeout(() => {
+                                if (currentChannel) { // Make sure user is still in channel
+                                    addParticipant(friend.displayName);
+                                    showSuccess(`${friend.displayName} joined the channel!`);
+                                }
+                            }, (index + 1) * 2000); // Stagger joins
+                        }
+                    });
                 }
-            }, 3000 + Math.random() * 5000);
+            }, 2000);
         }
 
         function addParticipant(name) {
             const participantsList = document.getElementById('participants-list');
-            const existingParticipant = Array.from(participantsList.children).find(p => 
-                p.querySelector('span:last-child').textContent === name
-            );
+            const existingParticipant = Array.from(participantsList.children).find(p => {
+                const nameText = p.querySelector('span:last-child').textContent;
+                return nameText.includes(name) && !nameText.includes('(You)');
+            });
             
             if (!existingParticipant) {
                 const participantEl = document.createElement('div');
@@ -1013,7 +1274,7 @@
             
             if (isMuted) {
                 micBtn.classList.add('muted');
-                micBtn.textContent = '🎤';
+                micBtn.textContent = '🔇';
                 micBtn.style.background = '#dc3545';
                 if (localStream) {
                     localStream.getAudioTracks()[0].enabled = false;
@@ -1026,6 +1287,19 @@
                     localStream.getAudioTracks()[0].enabled = true;
                 }
             }
+
+            // Update mute status in Firebase or demo mode
+            updateMuteStatus();
+        }
+
+        async function updateMuteStatus() {
+            try {
+                if (firebaseEnabled && currentChannel) {
+                    await firebase.database().ref(`channels/${currentChannel}/users/${currentUser.uid}/isMuted`).set(isMuted);
+                }
+            } catch (error) {
+                console.error('Error updating mute status:', error);
+            }
         }
 
         function toggleSpeaker() {
@@ -1035,6 +1309,7 @@
         }
 
         function leaveChannel() {
+            const previousChannel = currentChannel;
             currentChannel = null;
             isConnected = false;
             
@@ -1042,6 +1317,9 @@
                 localStream.getTracks().forEach(track => track.stop());
                 localStream = null;
             }
+            
+            // Remove user from channel in Firebase or demo mode
+            removeUserFromChannel(previousChannel);
             
             document.getElementById('voice-section').classList.add('hidden');
             document.getElementById('channel-title').textContent = 'Select a Voice Channel';
@@ -1056,6 +1334,81 @@
                 </div>
             `;
         }
+
+        async function removeUserFromChannel(channelName) {
+            if (!channelName) return;
+            
+            try {
+                // Close all peer connections
+                Object.keys(peerConnections).forEach(userId => {
+                    closePeerConnection(userId);
+                });
+                
+                if (firebaseEnabled) {
+                    // Remove user from channel
+                    await firebase.database().ref(`channels/${channelName}/users/${currentUser.uid}`).remove();
+                    
+                    // Clear user's current channel
+                    await firebase.database().ref(`users/${currentUser.uid}/currentChannel`).remove();
+                    
+                    // Stop listening to channel updates
+                    if (channelListener) {
+                        channelListener.off();
+                        channelListener = null;
+                    }
+                    
+                    // Stop listening to signaling
+                    firebase.database().ref(`channels/${channelName}/signaling/${currentUser.uid}`).off();
+                    
+                } else {
+                    console.log(`Demo: ${currentUser.displayName} left ${channelName}`);
+                }
+            } catch (error) {
+                console.error('Error leaving channel:', error);
+            }
+        }
+
+        // Add connection status indicator
+        function updateConnectionStatus() {
+            const connectedPeers = Object.keys(peerConnections).length;
+            const statusText = document.getElementById('channel-description');
+            
+            if (connectedPeers > 0) {
+                statusText.textContent = `Connected to ${currentChannel} channel. Voice connected to ${connectedPeers} user(s).`;
+            } else {
+                statusText.textContent = `Connected to ${currentChannel} channel. Waiting for other users...`;
+            }
+        }
+
+        // Show channel user counts
+        function updateChannelUserCounts() {
+            if (!firebaseEnabled) return;
+            
+            const channels = ['general', 'music', 'gaming'];
+            channels.forEach(channelName => {
+                firebase.database().ref(`channels/${channelName}/users`).on('value', (snapshot) => {
+                    const users = snapshot.val();
+                    const userCount = users ? Object.keys(users).length : 0;
+                    
+                    // Update channel display with user count
+                    const channelEl = document.querySelector(`.channel-item[onclick="joinChannel('${channelName}')"]`);
+                    if (channelEl) {
+                        const originalText = channelEl.textContent.split(' (')[0];
+                        channelEl.textContent = userCount > 0 ? `${originalText} (${userCount})` : originalText;
+                    }
+                });
+            });
+        }
+
+        // Clean up when user leaves the page
+        window.addEventListener('beforeunload', () => {
+            if (currentChannel) {
+                removeUserFromChannel(currentChannel);
+            }
+            if (firebaseEnabled && currentUser) {
+                firebase.database().ref(`users/${currentUser.uid}/online`).set(false);
+            }
+        });
 
         // Initialize app
         if (firebaseEnabled) {
@@ -1085,22 +1438,57 @@
             }
         }, 3000);
 
-        // Add instructions for Firebase setup
+        // Add some demo instructions and debugging for GitHub Pages
         setTimeout(() => {
             if (!firebaseEnabled) {
                 const authScreen = document.getElementById('auth-screen');
                 const instructions = document.createElement('div');
                 instructions.innerHTML = `
                     <div style="margin-top: 20px; padding: 15px; background: rgba(102, 126, 234, 0.1); border-radius: 12px; font-size: 14px;">
-                        <strong>Demo Mode Active</strong><br>
-                        To enable real accounts, get your Firebase config from:<br>
-                        <a href="https://console.firebase.google.com" target="_blank" style="color: #667eea;">console.firebase.google.com</a><br>
-                        Then replace the firebaseConfig in the code.
+                        <strong>🚀 GitHub Pages Setup</strong><br>
+                        For real voice chat on GitHub Pages:<br><br>
+                        
+                        <strong>1. Firebase Setup:</strong><br>
+                        • Go to <a href="https://console.firebase.google.com" target="_blank" style="color: #667eea;">console.firebase.google.com</a><br>
+                        • Create project → Enable Realtime Database<br>
+                        • Copy config and replace firebaseConfig in code<br><br>
+                        
+                        <strong>2. Database Rules:</strong><br>
+                        Set rules to: <code>{ "rules": { ".read": true, ".write": true } }</code><br><br>
+                        
+                        <strong>3. Test Voice Chat:</strong><br>
+                        • Open 2 browser tabs with your GitHub Pages URL<br>
+                        • Sign in with different emails<br>
+                        • Join same channel<br>
+                        • Allow microphone permissions<br><br>
+                        
+                        <strong>Current Status:</strong> Demo Mode (Visual Only)
                     </div>
                 `;
                 authScreen.appendChild(instructions);
             }
         }, 1000);
+
+        // Add click handler to enable audio (needed for some browsers)
+        document.addEventListener('click', () => {
+            // This helps with audio autoplay restrictions
+            const audioElements = document.querySelectorAll('audio');
+            audioElements.forEach(audio => {
+                if (audio.paused) {
+                    audio.play().catch(e => console.log('Audio play failed:', e));
+                }
+            });
+        }, { once: true });
+
+        // Debug WebRTC support
+        console.log('WebRTC Support Check:');
+        console.log('RTCPeerConnection:', typeof RTCPeerConnection !== 'undefined');
+        console.log('getUserMedia:', !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
+        console.log('HTTPS:', location.protocol === 'https:');
+        
+        if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+            console.warn('⚠️ WebRTC requires HTTPS. Voice chat may not work over HTTP.');
+        }
     </script>
 </body>
 </html>
