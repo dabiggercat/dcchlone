@@ -906,4 +906,136 @@
                 // In a real app, you'd set up WebRTC connections here
                 simulateVoiceConnection();
             } catch (error) {
-                showError('Microphone access denied. You need micro
+                showError('Microphone access denied. You need microphone permission for voice chat.');
+            }
+        }
+
+        function simulateVoiceConnection() {
+            // Simulate other friends joining occasionally
+            setTimeout(() => {
+                if (currentChannel && friends.length > 0) {
+                    const onlineFriends = friends.filter(f => f.online);
+                    if (onlineFriends.length > 0) {
+                        const randomFriend = onlineFriends[Math.floor(Math.random() * onlineFriends.length)];
+                        addParticipant(randomFriend.displayName);
+                    }
+                }
+            }, 3000 + Math.random() * 5000);
+        }
+
+        function addParticipant(name) {
+            const participantsList = document.getElementById('participants-list');
+            const existingParticipant = Array.from(participantsList.children).find(p => 
+                p.querySelector('span:last-child').textContent === name
+            );
+            
+            if (!existingParticipant) {
+                const participantEl = document.createElement('div');
+                participantEl.className = 'participant';
+                participantEl.innerHTML = `
+                    <span class="status-online"></span>
+                    <span>${name}</span>
+                `;
+                participantsList.appendChild(participantEl);
+            }
+        }
+
+        function toggleMic() {
+            if (!isConnected) return;
+            
+            isMuted = !isMuted;
+            const micBtn = document.getElementById('mic-btn');
+            
+            if (isMuted) {
+                micBtn.classList.add('muted');
+                micBtn.textContent = '🎤';
+                micBtn.style.background = '#dc3545';
+                if (localStream) {
+                    localStream.getAudioTracks()[0].enabled = false;
+                }
+            } else {
+                micBtn.classList.remove('muted');
+                micBtn.textContent = '🎤';
+                micBtn.style.background = '#28a745';
+                if (localStream) {
+                    localStream.getAudioTracks()[0].enabled = true;
+                }
+            }
+        }
+
+        function toggleSpeaker() {
+            const speakerBtn = document.getElementById('speaker-btn');
+            // In a real implementation, you'd toggle audio output here
+            speakerBtn.style.opacity = speakerBtn.style.opacity === '0.5' ? '1' : '0.5';
+        }
+
+        function leaveChannel() {
+            currentChannel = null;
+            isConnected = false;
+            
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
+            
+            document.getElementById('voice-section').classList.add('hidden');
+            document.getElementById('channel-title').textContent = 'Select a Voice Channel';
+            document.getElementById('channel-description').textContent = 'Choose a channel from the sidebar to start voice chatting with your friends!';
+            document.querySelectorAll('.channel-item').forEach(item => item.classList.remove('active'));
+            
+            // Reset participants list
+            document.getElementById('participants-list').innerHTML = `
+                <div class="participant">
+                    <span class="status-online"></span>
+                    <span id="current-user-name">${currentUser.displayName}</span>
+                </div>
+            `;
+        }
+
+        // Initialize app
+        if (firebaseEnabled) {
+            firebase.auth().onAuthStateChanged((user) => {
+                if (user) {
+                    currentUser = user;
+                    showMainApp();
+                } else {
+                    signOut();
+                }
+            });
+        }
+
+        // Add some demo friend requests in demo mode
+        setTimeout(() => {
+            if (!firebaseEnabled && pendingRequests.length === 0) {
+                // Add a demo friend request after 3 seconds
+                pendingRequests.push({
+                    id: 'demo-request-1',
+                    email: 'alice@example.com',
+                    displayName: 'Alice Smith',
+                    timestamp: Date.now()
+                });
+                if (currentUser) {
+                    loadPendingRequests();
+                }
+            }
+        }, 3000);
+
+        // Add instructions for Firebase setup
+        setTimeout(() => {
+            if (!firebaseEnabled) {
+                const authScreen = document.getElementById('auth-screen');
+                const instructions = document.createElement('div');
+                instructions.innerHTML = `
+                    <div style="margin-top: 20px; padding: 15px; background: rgba(102, 126, 234, 0.1); border-radius: 12px; font-size: 14px;">
+                        <strong>Demo Mode Active</strong><br>
+                        To enable real accounts, get your Firebase config from:<br>
+                        <a href="https://console.firebase.google.com" target="_blank" style="color: #667eea;">console.firebase.google.com</a><br>
+                        Then replace the firebaseConfig in the code.
+                    </div>
+                `;
+                authScreen.appendChild(instructions);
+            }
+        }, 1000);
+    </script>
+</body>
+</html>
