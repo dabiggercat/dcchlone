@@ -597,9 +597,14 @@
         function signOut() {
             if (firebaseEnabled) {
                 firebase.auth().signOut();
+                if (friendRequestListener) {
+                    friendRequestListener.off();
+                }
             }
             currentUser = null;
             currentChannel = null;
+            friends = [];
+            pendingRequests = [];
             document.getElementById('auth-screen').classList.remove('hidden');
             document.getElementById('main-app').classList.add('hidden');
         }
