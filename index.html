@@ -894,20 +894,85 @@
             event.target.classList.add('active');
             
             document.getElementById('channel-title').textContent = `🔊 ${channelName.charAt(0).toUpperCase() + channelName.slice(1)}`;
-            document.getElementById('channel-description').textContent = `Connected to ${channelName} channel. Only your friends can hear you.`;
+            document.getElementById('channel-description').textContent = `Connected to ${channelName} channel. You can talk with friends in this channel.`;
             document.getElementById('voice-section').classList.remove('hidden');
 
             try {
                 // Request microphone permission
                 localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 isConnected = true;
+                
+                // Add user to channel in Firebase or demo mode
+                await addUserToChannel(channelName);
+                
                 showSuccess(`Joined ${channelName} channel!`);
                 
-                // In a real app, you'd set up WebRTC connections here
-                simulateVoiceConnection();
+                // Start listening for other users in the channel
+                setupChannelListener(channelName);
             } catch (error) {
                 showError('Microphone access denied. You need microphone permission for voice chat.');
             }
+        }
+
+        async function addUserToChannel(channelName) {
+            try {
+                if (firebaseEnabled) {
+                    // Add user to channel in Firebase
+                    await firebase.database().ref(`channels/${channelName}/users/${currentUser.uid}`).set({
+                        displayName: currentUser.displayName,
+                        joinedAt: Date.now(),
+                        isMuted: false
+                    });
+                    
+                    // Update user's current channel
+                    await firebase.database().ref(`users/${currentUser.uid}/currentChannel`).set(channelName);
+                } else {
+                    // Demo mode - simulate joining channel
+                    console.log(`Demo: ${currentUser.displayName} joined ${channelName}`);
+                }
+            } catch (error) {
+                console.error('Error joining channel:', error);
+                showError('Error joining channel: ' + error.message);
+            }
+        }
+
+        function setupChannelListener(channelName) {
+            if (firebaseEnabled) {
+                // Listen for users joining/leaving the channel
+                firebase.database().ref(`channels/${channelName}/users`).on('value', (snapshot) => {
+                    const users = snapshot.val();
+                    updateParticipantsList(users);
+                });
+            } else {
+                // Demo mode - simulate other users in channel
+                simulateVoiceConnection();
+            }
+        }
+
+        function updateParticipantsList(users) {
+            const participantsList = document.getElementById('participants-list');
+            
+            if (!users) {
+                participantsList.innerHTML = `
+                    <div class="participant">
+                        <span class="status-online"></span>
+                        <span>${currentUser.displayName} (You)</span>
+                    </div>
+                `;
+                return;
+            }
+
+            const userEntries = Object.entries(users);
+            participantsList.innerHTML = userEntries.map(([userId, userData]) => {
+                const isCurrentUser = userId === currentUser.uid;
+                const muteIndicator = userData.isMuted ? '🔇' : '';
+                return `
+                    <div class="participant ${userData.speaking ? 'speaking' : ''}">
+                        <span class="status-online"></span>
+                        <span>${userData.displayName}${isCurrentUser ? ' (You)' : ''} ${muteIndicator}</span>
+                    </div>
+                `;
+            }).join('');
         }
 
         function simulateVoiceConnection() {
