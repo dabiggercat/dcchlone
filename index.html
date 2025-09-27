@@ -198,6 +198,15 @@
             margin-right: 8px;
         }
 
+        .status-offline {
+            width: 10px;
+            height: 10px;
+            background: #6c757d;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+
         .voice-controls {
             display: flex;
             gap: 10px;
@@ -292,6 +301,24 @@
             display: flex;
             gap: 10px;
             margin-bottom: 15px;
+        }
+
+        .add-friend input {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .add-friend button {
+            padding: 8px 12px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
         }
 
         .friend-request-popup {
@@ -415,7 +442,7 @@
             <div class="friends-list">
                 <h3>Friends</h3>
                 <div class="add-friend">
-                    <input type="text" id="friend-name" placeholder="Friend's name">
+                    <input type="text" id="friend-name" placeholder="Friend's email">
                     <button onclick="sendFriendRequest()">Send Request</button>
                 </div>
                 
@@ -546,7 +573,8 @@
                     displayName,
                     email,
                     online: true,
-                    friends: {}
+                    friends: {},
+                    friendRequests: {}
                 });
 
                 currentUser = userCredential.user;
@@ -595,7 +623,8 @@
         }
 
         function signOut() {
-            if (firebaseEnabled) {
+            if (firebaseEnabled && currentUser) {
+                firebase.database().ref(`users/${currentUser.uid}/online`).set(false);
                 firebase.auth().signOut();
                 if (friendRequestListener) {
                     friendRequestListener.off();
@@ -625,6 +654,7 @@
             const errorEl = document.getElementById('auth-error');
             errorEl.textContent = message;
             errorEl.classList.remove('hidden');
+            setTimeout(() => errorEl.classList.add('hidden'), 5000);
         }
 
         function showSuccess(message) {
@@ -637,45 +667,173 @@
 
         // Friends System
         async function sendFriendRequest() {
-            const friendEmail = document.getElementById('friend-email').value;
-            if (!friendEmail) return;
+            const friendEmail = document.getElementById('friend-name').value;
+            if (!friendEmail) {
+                showError('Please enter an email address');
+                return;
+            }
 
             try {
-                if (firebase.apps.length) {
-                    // Real Firebase implementation would go here
+                if (firebaseEnabled) {
+                    // Real Firebase implementation
                     const usersRef = firebase.database().ref('users');
                     const snapshot = await usersRef.orderByChild('email').equalTo(friendEmail).once('value');
                     const users = snapshot.val();
                     
                     if (users) {
                         const friendId = Object.keys(users)[0];
-                        await firebase.database().ref(`users/${currentUser.uid}/friends/${friendId}`).set({
-                            email: friendEmail,
-                            displayName: users[friendId].displayName,
+                        const friendData = users[friendId];
+                        
+                        // Send friend request
+                        await firebase.database().ref(`users/${friendId}/friendRequests/${currentUser.uid}`).set({
+                            email: currentUser.email,
+                            displayName: currentUser.displayName,
+                            timestamp: Date.now()
+                        });
+                        
+                        showSuccess(`Friend request sent to ${friendData.displayName}!`);
+                    } else {
+                        showError('User not found with that email address');
+                    }
+                } else {
+                    // Demo mode - simulate adding friend request
+                    const demoRequest = {
+                        id: 'demo-request-' + Date.now(),
+                        email: friendEmail,
+                        displayName: friendEmail.split('@')[0],
+                        timestamp: Date.now()
+                    };
+                    pendingRequests.push(demoRequest);
+                    loadPendingRequests();
+                    showSuccess('Demo: Friend request sent!');
+                }
+                
+                document.getElementById('friend-name').value = '';
+            } catch (error) {
+                showError('Error sending friend request: ' + error.message);
+            }
+        }
+
+        function loadPendingRequests() {
+            const container = document.getElementById('pending-requests');
+            const list = document.getElementById('pending-requests-list');
+            
+            if (firebaseEnabled) {
+                // Load pending requests from Firebase
+                firebase.database().ref(`users/${currentUser.uid}/friendRequests`).on('value', (snapshot) => {
+                    const requests = snapshot.val();
+                    if (requests) {
+                        const requestIds = Object.keys(requests);
+                        if (requestIds.length > 0) {
+                            container.style.display = 'block';
+                            list.innerHTML = requestIds.map(requestId => {
+                                const request = requests[requestId];
+                                return `
+                                    <div class="pending-request-item">
+                                        <span>${request.displayName} (${request.email})</span>
+                                        <div class="request-buttons">
+                                            <button class="accept-btn" onclick="acceptFriendRequest('${requestId}')">Accept</button>
+                                            <button class="decline-btn" onclick="declineFriendRequest('${requestId}')">Decline</button>
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('');
+                        } else {
+                            container.style.display = 'none';
+                        }
+                    } else {
+                        container.style.display = 'none';
+                    }
+                });
+            } else {
+                // Demo mode
+                if (pendingRequests.length > 0) {
+                    container.style.display = 'block';
+                    list.innerHTML = pendingRequests.map(request => `
+                        <div class="pending-request-item">
+                            <span>${request.displayName} (${request.email})</span>
+                            <div class="request-buttons">
+                                <button class="accept-btn" onclick="acceptFriendRequest('${request.id}')">Accept</button>
+                                <button class="decline-btn" onclick="declineFriendRequest('${request.id}')">Decline</button>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    container.style.display = 'none';
+                }
+            }
+        }
+
+        async function acceptFriendRequest(requestId) {
+            try {
+                if (firebaseEnabled) {
+                    // Get the request data first
+                    const requestSnapshot = await firebase.database().ref(`users/${currentUser.uid}/friendRequests/${requestId}`).once('value');
+                    const requestData = requestSnapshot.val();
+                    
+                    if (requestData) {
+                        // Add to both users' friends lists
+                        await firebase.database().ref(`users/${currentUser.uid}/friends/${requestId}`).set({
+                            email: requestData.email,
+                            displayName: requestData.displayName,
                             status: 'accepted'
                         });
                         
-                        await firebase.database().ref(`users/${friendId}/friends/${currentUser.uid}`).set({
+                        await firebase.database().ref(`users/${requestId}/friends/${currentUser.uid}`).set({
                             email: currentUser.email,
                             displayName: currentUser.displayName,
                             status: 'accepted'
                         });
+                        
+                        // Remove the friend request
+                        await firebase.database().ref(`users/${currentUser.uid}/friendRequests/${requestId}`).remove();
+                        
+                        showSuccess(`You are now friends with ${requestData.displayName}!`);
                     }
                 } else {
-                    // Demo mode - simulate adding friend
-                    friends.push({
-                        id: 'demo-friend-' + Date.now(),
-                        displayName: friendEmail.split('@')[0],
-                        email: friendEmail,
-                        online: Math.random() > 0.5
-                    });
+                    // Demo mode
+                    const request = pendingRequests.find(req => req.id === requestId);
+                    if (request) {
+                        friends.push({
+                            id: request.id,
+                            displayName: request.displayName,
+                            email: request.email,
+                            online: Math.random() > 0.5
+                        });
+                        pendingRequests = pendingRequests.filter(req => req.id !== requestId);
+                        loadFriends();
+                        loadPendingRequests();
+                        showSuccess(`You are now friends with ${request.displayName}!`);
+                    }
                 }
-                
-                document.getElementById('friend-email').value = '';
-                loadFriends();
-                showSuccess('Friend added!');
             } catch (error) {
-                showError('Error adding friend: ' + error.message);
+                showError('Error accepting friend request: ' + error.message);
+            }
+        }
+
+        async function declineFriendRequest(requestId) {
+            try {
+                if (firebaseEnabled) {
+                    await firebase.database().ref(`users/${currentUser.uid}/friendRequests/${requestId}`).remove();
+                    showSuccess('Friend request declined');
+                } else {
+                    // Demo mode
+                    pendingRequests = pendingRequests.filter(req => req.id !== requestId);
+                    loadPendingRequests();
+                    showSuccess('Friend request declined');
+                }
+            } catch (error) {
+                showError('Error declining friend request: ' + error.message);
+            }
+        }
+
+        function setupFriendRequestListener() {
+            if (firebaseEnabled) {
+                // Listen for new friend requests
+                friendRequestListener = firebase.database().ref(`users/${currentUser.uid}/friendRequests`);
+                friendRequestListener.on('child_added', (snapshot) => {
+                    // This will automatically update the UI through loadPendingRequests
+                });
             }
         }
 
@@ -748,120 +906,4 @@
                 // In a real app, you'd set up WebRTC connections here
                 simulateVoiceConnection();
             } catch (error) {
-                showError('Microphone access denied. You need microphone permission for voice chat.');
-            }
-        }
-
-        function simulateVoiceConnection() {
-            // Simulate other friends joining occasionally
-            setTimeout(() => {
-                if (currentChannel && friends.length > 0) {
-                    const onlineFriends = friends.filter(f => f.online);
-                    if (onlineFriends.length > 0) {
-                        const randomFriend = onlineFriends[Math.floor(Math.random() * onlineFriends.length)];
-                        addParticipant(randomFriend.displayName);
-                    }
-                }
-            }, 3000 + Math.random() * 5000);
-        }
-
-        function addParticipant(name) {
-            const participantsList = document.getElementById('participants-list');
-            const existingParticipant = Array.from(participantsList.children).find(p => 
-                p.querySelector('span:last-child').textContent === name
-            );
-            
-            if (!existingParticipant) {
-                const participantEl = document.createElement('div');
-                participantEl.className = 'participant';
-                participantEl.innerHTML = `
-                    <span class="status-online"></span>
-                    <span>${name}</span>
-                `;
-                participantsList.appendChild(participantEl);
-            }
-        }
-
-        function toggleMic() {
-            if (!isConnected) return;
-            
-            isMuted = !isMuted;
-            const micBtn = document.getElementById('mic-btn');
-            
-            if (isMuted) {
-                micBtn.classList.add('muted');
-                micBtn.textContent = '🎤';
-                micBtn.style.background = '#dc3545';
-                if (localStream) {
-                    localStream.getAudioTracks()[0].enabled = false;
-                }
-            } else {
-                micBtn.classList.remove('muted');
-                micBtn.textContent = '🎤';
-                micBtn.style.background = '#28a745';
-                if (localStream) {
-                    localStream.getAudioTracks()[0].enabled = true;
-                }
-            }
-        }
-
-        function toggleSpeaker() {
-            const speakerBtn = document.getElementById('speaker-btn');
-            // In a real implementation, you'd toggle audio output here
-            speakerBtn.style.opacity = speakerBtn.style.opacity === '0.5' ? '1' : '0.5';
-        }
-
-        function leaveChannel() {
-            currentChannel = null;
-            isConnected = false;
-            
-            if (localStream) {
-                localStream.getTracks().forEach(track => track.stop());
-                localStream = null;
-            }
-            
-            document.getElementById('voice-section').classList.add('hidden');
-            document.getElementById('channel-title').textContent = 'Select a Voice Channel';
-            document.getElementById('channel-description').textContent = 'Choose a channel from the sidebar to start voice chatting with your friends!';
-            document.querySelectorAll('.channel-item').forEach(item => item.classList.remove('active'));
-            
-            // Reset participants list
-            document.getElementById('participants-list').innerHTML = `
-                <div class="participant">
-                    <span class="status-online"></span>
-                    <span id="current-user-name">${currentUser.displayName}</span>
-                </div>
-            `;
-        }
-
-        // Initialize app
-        if (firebaseEnabled) {
-            firebase.auth().onAuthStateChanged((user) => {
-                if (user) {
-                    currentUser = user;
-                    showMainApp();
-                } else {
-                    signOut();
-                }
-            });
-        }
-
-        // Add instructions for Firebase setup
-        setTimeout(() => {
-            if (!firebaseEnabled) {
-                const authScreen = document.getElementById('auth-screen');
-                const instructions = document.createElement('div');
-                instructions.innerHTML = `
-                    <div style="margin-top: 20px; padding: 15px; background: rgba(102, 126, 234, 0.1); border-radius: 12px; font-size: 14px;">
-                        <strong>Demo Mode Active</strong><br>
-                        To enable real accounts, get your Firebase config from:<br>
-                        <a href="https://console.firebase.google.com" target="_blank" style="color: #667eea;">console.firebase.google.com</a><br>
-                        Then replace the firebaseConfig in the code.
-                    </div>
-                `;
-                authScreen.appendChild(instructions);
-            }
-        }, 1000);
-    </script>
-</body>
-</html>
+                showError('Microphone access denied. You need micro
