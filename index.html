@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Voice Chat</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
+            width: 90%;
+            max-width: 500px;
+            text-align: center;
+        }
+
+        .main-app {
+            display: flex;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
+            width: 95%;
+            max-width: 1200px;
+            height: 80vh;
+        }
+
+        .sidebar {
+            width: 300px;
+            background: rgba(102, 126, 234, 0.1);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .main-content {
+            flex: 1;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            font-weight: 300;
+        }
+
+        h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.8em;
+            font-weight: 400;
+        }
+
+        h3 {
+            color: #555;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 500;
+        }
+
+        input {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e1e5e9;
+            border-radius: 12px;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .btn {
+            padding: 15px 30px;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin: 5px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #f8f9fa;
+            color: #495057;
+            border: 2px solid #e9ecef;
+        }
+
+        .btn-secondary:hover {
+            background: #e9ecef;
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-warning {
+            background: #ffc107;
+            color: #333;
+        }
+
+        .user-info {
+            background: rgba(102, 126, 234, 0.1);
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+        }
+
+        .friends-list, .voice-channels {
+            background: white;
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+        }
+
+        .friend-item, .channel-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            margin: 5px 0;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .channel-item {
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .channel-item:hover {
+            background: rgba(102, 126, 234, 0.1);
+        }
+
+        .channel-item.active {
+            background: rgba(102, 126, 234, 0.2);
+        }
+
+        .status-online {
+            width: 10px;
+            height: 10px;
+            background: #28a745;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+
+        .voice-controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 20px;
+        }
+
+        .voice-btn {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+            font-size: 24px;
+            transition: all 0.3s ease;
+        }
+
+        .voice-btn.mic {
+            background: #28a745;
+            color: white;
+        }
+
+        .voice-btn.mic.muted {
+            background: #dc3545;
+        }
+
+        .voice-btn.speaker {
+            background: #17a2b8;
+            color: white;
+        }
+
+        .voice-btn.leave {
+            background: #dc3545;
+            color: white;
+        }
+
+        .current-channel {
+            text-align: center;
+            padding: 20px;
+            background: rgba(102, 126, 234, 0.1);
+            border-radius: 12px;
+            margin-bottom: 20px;
+        }
+
+        .participants {
+            background: white;
+            border-radius: 12px;
+            padding: 15px;
+            margin-top: 20px;
+        }
+
+        .participant {
+            display: flex;
+            align-items: center;
+            padding: 8px;
+            margin: 5px 0;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .speaking {
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(102, 126, 234, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(102, 126, 234, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(102, 126, 234, 0); }
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .error {
+            color: #dc3545;
+            margin-top: 10px;
+            padding: 10px;
+            background: rgba(220, 53, 69, 0.1);
+            border-radius: 8px;
+        }
+
+        .success {
+            color: #28a745;
+            margin-top: 10px;
+            padding: 10px;
+            background: rgba(40, 167, 69, 0.1);
+            border-radius: 8px;
+        }
+
+        .add-friend {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .add-friend input {
+            flex: 1;
+            padding: 10px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+        }
+
+        .add-friend button {
+            padding: 10px 15px;
+            border: none;
+            background: #28a745;
+            color: white;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <!-- Login/Register Screen -->
+    <div id="auth-screen" class="container">
+        <h1>🎙️ Voice Chat</h1>
+        
+        <div class="input-group">
+            <label for="display-name">Your Name</label>
+            <input type="text" id="display-name" placeholder="Enter your name">
+        </div>
+
+        <div class="input-group">
+            <label for="email">Email</label>
+            <input type="email" id="email" placeholder="Enter your email">
+        </div>
+
+        <div class="input-group">
+            <label for="password">Password</label>
+            <input type="password" id="password" placeholder="Enter your password">
+        </div>
+
+        <button class="btn btn-primary" onclick="signUp()">Create Account</button>
+        <button class="btn btn-secondary" onclick="signIn()">Sign In</button>
+
+        <div id="auth-error" class="error hidden"></div>
+    </div>
+
+    <!-- Main App Screen -->
+    <div id="main-app" class="main-app hidden">
+        <div class="sidebar">
+            <div class="user-info">
+                <h3>Welcome, <span id="user-name"></span>!</h3>
+                <button class="btn btn-secondary" onclick="signOut()">Sign Out</button>
+            </div>
+
+            <div class="friends-list">
+                <h3>Friends</h3>
+                <div class="add-friend">
+                    <input type="text" id="friend-name" placeholder="Friend's name">
+                    <button onclick="sendFriendRequest()">Add</button>
+                </div>
+                <div id="friends-container">
+                    <p>No friends yet. Add some friends to voice chat!</p>
+                </div>
+            </div>
+
+            <div class="voice-channels">
+                <h3>Voice Channels</h3>
+                <div class="channel-item" onclick="joinChannel('general')">
+                    🔊 General
+                </div>
+                <div class="channel-item" onclick="joinChannel('music')">
+                    🎵 Music
+                </div>
+                <div class="channel-item" onclick="joinChannel('gaming')">
+                    🎮 Gaming
+                </div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="current-channel">
+                <h2 id="channel-title">Select a Voice Channel</h2>
+                <p id="channel-description">Choose a channel from the sidebar to start voice chatting with your friends!</p>
+            </div>
+
+            <div id="voice-section" class="hidden">
+                <div class="voice-controls">
+                    <button class="voice-btn mic" id="mic-btn" onclick="toggleMic()" title="Toggle Microphone">
+                        🎤
+                    </button>
+                    <button class="voice-btn speaker" id="speaker-btn" onclick="toggleSpeaker()" title="Toggle Speaker">
+                        🔊
+                    </button>
+                    <button class="voice-btn leave" onclick="leaveChannel()" title="Leave Channel">
+                        📞
+                    </button>
+                </div>
+
+                <div class="participants">
+                    <h3>In Channel</h3>
+                    <div id="participants-list">
+                        <div class="participant">
+                            <span class="status-online"></span>
+                            <span id="current-user-name">You</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="status-message" class="hidden"></div>
+        </div>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-app-compat.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-auth-compat.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-database-compat.min.js"></script>
+
+    <script>
+        // Firebase Configuration - Replace with your actual config
+        // To get your config: https://console.firebase.google.com → Project Settings → General → Your apps
+        const firebaseConfig = {
+            apiKey: "AIzaSyBQp5dYHCo8WoBgSCrjsTNYrm9I32Ge-oU",
+            authDomain: "dcchlone.firebaseapp.com",
+            databaseURL: "https://dcchlone-default-rtdb.firebaseio.com",
+            projectId: "dcchlone",
+            storageBucket: "dcchlone.firebasestorage.app",
+            messagingSenderId: "152885239903",
+            appId: "1:152885239903:web:7665fee57fe7048fff3bea",
+            measurementId: "G-JWX27QXZ61"
+        };
+
+        // Initialize Firebase
+        let firebaseEnabled = false;
+        try {
+            if (firebaseConfig.apiKey) {
+                firebase.initializeApp(firebaseConfig);
+                firebaseEnabled = true;
+                console.log("Firebase initialized successfully");
+            } else {
+                console.log("Running in demo mode - add Firebase config for full functionality");
+            }
+        } catch (error) {
+            console.log("Firebase initialization failed - using demo mode:", error.message);
+        }
+
+        // App State
+        let currentUser = null;
+        let currentChannel = null;
+        let isConnected = false;
+        let isMuted = false;
+        let friends = [];
+        let localStream = null;
+        let peerConnections = {};
+
+        // Authentication Functions
+        async function signUp() {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const displayName = document.getElementById('display-name').value;
+
+            if (!email || !password || !displayName) {
+                showError('Please fill in all fields');
+                return;
+            }
+
+            try {
+                // Check if Firebase is properly configured
+                if (!firebaseEnabled) {
+                    simulateAuth(displayName, email);
+                    return;
+                }
+
+                const userCredential = await firebase.auth().createUserWithEmailAndPassword(email, password);
+                await userCredential.user.updateProfile({ displayName });
+                
+                // Save user data to database
+                await firebase.database().ref(`users/${userCredential.user.uid}`).set({
+                    displayName,
+                    email,
+                    online: true,
+                    friends: {}
+                });
+
+                currentUser = userCredential.user;
+                showMainApp();
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+
+        async function signIn() {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+
+            if (!email || !password) {
+                showError('Please enter email and password');
+                return;
+            }
+
+            try {
+                // Check if Firebase is properly configured
+                if (!firebaseEnabled) {
+                    const displayName = document.getElementById('display-name').value || 'Demo User';
+                    simulateAuth(displayName, email);
+                    return;
+                }
+
+                const userCredential = await firebase.auth().signInWithEmailAndPassword(email, password);
+                currentUser = userCredential.user;
+                
+                // Update online status
+                await firebase.database().ref(`users/${currentUser.uid}/online`).set(true);
+                showMainApp();
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+
+        function simulateAuth(displayName, email) {
+            currentUser = {
+                uid: 'demo-' + Date.now(),
+                displayName,
+                email
+            };
+            showMainApp();
+            showSuccess('Running in demo mode. Add your Firebase config for real accounts!');
+        }
+
+        function signOut() {
+            if (firebaseEnabled) {
+                firebase.auth().signOut();
+            }
+            currentUser = null;
+            currentChannel = null;
+            document.getElementById('auth-screen').classList.remove('hidden');
+            document.getElementById('main-app').classList.add('hidden');
+        }
+
+        // UI Functions
+        function showMainApp() {
+            document.getElementById('auth-screen').classList.add('hidden');
+            document.getElementById('main-app').classList.remove('hidden');
+            document.getElementById('user-name').textContent = currentUser.displayName;
+            document.getElementById('current-user-name').textContent = currentUser.displayName;
+            
+            loadFriends();
+        }
+
+        function showError(message) {
+            const errorEl = document.getElementById('auth-error');
+            errorEl.textContent = message;
+            errorEl.classList.remove('hidden');
+        }
+
+        function showSuccess(message) {
+            const statusEl = document.getElementById('status-message');
+            statusEl.textContent = message;
+            statusEl.className = 'success';
+            statusEl.classList.remove('hidden');
+            setTimeout(() => statusEl.classList.add('hidden'), 5000);
+        }
+
+        // Friends System
+        async function sendFriendRequest() {
+            const friendEmail = document.getElementById('friend-email').value;
+            if (!friendEmail) return;
+
+            try {
+                if (firebase.apps.length) {
+                    // Real Firebase implementation would go here
+                    const usersRef = firebase.database().ref('users');
+                    const snapshot = await usersRef.orderByChild('email').equalTo(friendEmail).once('value');
+                    const users = snapshot.val();
+                    
+                    if (users) {
+                        const friendId = Object.keys(users)[0];
+                        await firebase.database().ref(`users/${currentUser.uid}/friends/${friendId}`).set({
+                            email: friendEmail,
+                            displayName: users[friendId].displayName,
+                            status: 'accepted'
+                        });
+                        
+                        await firebase.database().ref(`users/${friendId}/friends/${currentUser.uid}`).set({
+                            email: currentUser.email,
+                            displayName: currentUser.displayName,
+                            status: 'accepted'
+                        });
+                    }
+                } else {
+                    // Demo mode - simulate adding friend
+                    friends.push({
+                        id: 'demo-friend-' + Date.now(),
+                        displayName: friendEmail.split('@')[0],
+                        email: friendEmail,
+                        online: Math.random() > 0.5
+                    });
+                }
+                
+                document.getElementById('friend-email').value = '';
+                loadFriends();
+                showSuccess('Friend added!');
+            } catch (error) {
+                showError('Error adding friend: ' + error.message);
+            }
+        }
+
+        function loadFriends() {
+            const container = document.getElementById('friends-container');
+            
+            if (friends.length === 0) {
+                container.innerHTML = '<p>No friends yet. Add some friends to voice chat!</p>';
+                return;
+            }
+
+            container.innerHTML = friends.map(friend => `
+                <div class="friend-item">
+                    <div>
+                        <span class="status-${friend.online ? 'online' : 'offline'}"></span>
+                        ${friend.displayName}
+                    </div>
+                    <span style="font-size: 12px; color: #666;">${friend.online ? 'Online' : 'Offline'}</span>
+                </div>
+            `).join('');
+        }
+
+        // Voice Chat Functions
+        async function joinChannel(channelName) {
+            currentChannel = channelName;
+            
+            // Update UI
+            document.querySelectorAll('.channel-item').forEach(item => item.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            document.getElementById('channel-title').textContent = `🔊 ${channelName.charAt(0).toUpperCase() + channelName.slice(1)}`;
+            document.getElementById('channel-description').textContent = `Connected to ${channelName} channel. Only your friends can hear you.`;
+            document.getElementById('voice-section').classList.remove('hidden');
+
+            try {
+                // Request microphone permission
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                isConnected = true;
+                showSuccess(`Joined ${channelName} channel!`);
+                
+                // In a real app, you'd set up WebRTC connections here
+                simulateVoiceConnection();
+            } catch (error) {
+                showError('Microphone access denied. You need microphone permission for voice chat.');
+            }
+        }
+
+        function simulateVoiceConnection() {
+            // Simulate other friends joining occasionally
+            setTimeout(() => {
+                if (currentChannel && friends.length > 0) {
+                    const onlineFriends = friends.filter(f => f.online);
+                    if (onlineFriends.length > 0) {
+                        const randomFriend = onlineFriends[Math.floor(Math.random() * onlineFriends.length)];
+                        addParticipant(randomFriend.displayName);
+                    }
+                }
+            }, 3000 + Math.random() * 5000);
+        }
+
+        function addParticipant(name) {
+            const participantsList = document.getElementById('participants-list');
+            const existingParticipant = Array.from(participantsList.children).find(p => 
+                p.querySelector('span:last-child').textContent === name
+            );
+            
+            if (!existingParticipant) {
+                const participantEl = document.createElement('div');
+                participantEl.className = 'participant';
+                participantEl.innerHTML = `
+                    <span class="status-online"></span>
+                    <span>${name}</span>
+                `;
+                participantsList.appendChild(participantEl);
+            }
+        }
+
+        function toggleMic() {
+            if (!isConnected) return;
+            
+            isMuted = !isMuted;
+            const micBtn = document.getElementById('mic-btn');
+            
+            if (isMuted) {
+                micBtn.classList.add('muted');
+                micBtn.textContent = '🎤';
+                micBtn.style.background = '#dc3545';
+                if (localStream) {
+                    localStream.getAudioTracks()[0].enabled = false;
+                }
+            } else {
+                micBtn.classList.remove('muted');
+                micBtn.textContent = '🎤';
+                micBtn.style.background = '#28a745';
+                if (localStream) {
+                    localStream.getAudioTracks()[0].enabled = true;
+                }
+            }
+        }
+
+        function toggleSpeaker() {
+            const speakerBtn = document.getElementById('speaker-btn');
+            // In a real implementation, you'd toggle audio output here
+            speakerBtn.style.opacity = speakerBtn.style.opacity === '0.5' ? '1' : '0.5';
+        }
+
+        function leaveChannel() {
+            currentChannel = null;
+            isConnected = false;
+            
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
+            
+            document.getElementById('voice-section').classList.add('hidden');
+            document.getElementById('channel-title').textContent = 'Select a Voice Channel';
+            document.getElementById('channel-description').textContent = 'Choose a channel from the sidebar to start voice chatting with your friends!';
+            document.querySelectorAll('.channel-item').forEach(item => item.classList.remove('active'));
+            
+            // Reset participants list
+            document.getElementById('participants-list').innerHTML = `
+                <div class="participant">
+                    <span class="status-online"></span>
+                    <span id="current-user-name">${currentUser.displayName}</span>
+                </div>
+            `;
+        }
+
+        // Initialize app
+        if (firebaseEnabled) {
+            firebase.auth().onAuthStateChanged((user) => {
+                if (user) {
+                    currentUser = user;
+                    showMainApp();
+                } else {
+                    signOut();
+                }
+            });
+        }
+
+        // Add instructions for Firebase setup
+        setTimeout(() => {
+            if (!firebaseEnabled) {
+                const authScreen = document.getElementById('auth-screen');
+                const instructions = document.createElement('div');
+                instructions.innerHTML = `
+                    <div style="margin-top: 20px; padding: 15px; background: rgba(102, 126, 234, 0.1); border-radius: 12px; font-size: 14px;">
+                        <strong>Demo Mode Active</strong><br>
+                        To enable real accounts, get your Firebase config from:<br>
+                        <a href="https://console.firebase.google.com" target="_blank" style="color: #667eea;">console.firebase.google.com</a><br>
+                        Then replace the firebaseConfig in the code.
+                    </div>
+                `;
+                authScreen.appendChild(instructions);
+            }
+        }, 1000);
+    </script>
+</body>
+</html>
