@@ -294,20 +294,87 @@
             margin-bottom: 15px;
         }
 
-        .add-friend input {
-            flex: 1;
-            padding: 10px;
-            border: 2px solid #e1e5e9;
-            border-radius: 8px;
+        .friend-request-popup {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: white;
+            border: 2px solid #667eea;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            z-index: 1000;
+            min-width: 300px;
+            animation: slideIn 0.3s ease;
         }
 
-        .add-friend button {
-            padding: 10px 15px;
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        .friend-request-popup h4 {
+            margin: 0 0 10px 0;
+            color: #333;
+        }
+
+        .friend-request-popup p {
+            margin: 0 0 15px 0;
+            color: #666;
+        }
+
+        .friend-request-buttons {
+            display: flex;
+            gap: 10px;
+        }
+
+        .friend-request-buttons button {
+            padding: 8px 16px;
             border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .accept-btn {
             background: #28a745;
             color: white;
+        }
+
+        .decline-btn {
+            background: #dc3545;
+            color: white;
+        }
+
+        .pending-requests {
+            background: rgba(255, 193, 7, 0.1);
+            border: 1px solid rgba(255, 193, 7, 0.3);
             border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 15px;
+        }
+
+        .pending-request-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px;
+            margin: 5px 0;
+            background: white;
+            border-radius: 6px;
+        }
+
+        .request-buttons {
+            display: flex;
+            gap: 5px;
+        }
+
+        .request-buttons button {
+            padding: 4px 8px;
+            border: none;
+            border-radius: 4px;
             cursor: pointer;
+            font-size: 12px;
         }
     </style>
 </head>
@@ -349,10 +416,16 @@
                 <h3>Friends</h3>
                 <div class="add-friend">
                     <input type="text" id="friend-name" placeholder="Friend's name">
-                    <button onclick="sendFriendRequest()">Add</button>
+                    <button onclick="sendFriendRequest()">Send Request</button>
                 </div>
+                
+                <div id="pending-requests" class="pending-requests" style="display: none;">
+                    <h4 style="margin: 0 0 10px 0; font-size: 14px;">Friend Requests</h4>
+                    <div id="pending-requests-list"></div>
+                </div>
+                
                 <div id="friends-container">
-                    <p>No friends yet. Add some friends to voice chat!</p>
+                    <p>No friends yet. Send some friend requests!</p>
                 </div>
             </div>
 
@@ -410,8 +483,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-database-compat.min.js"></script>
 
     <script>
-        // Firebase Configuration - Replace with your actual config
-        // To get your config: https://console.firebase.google.com → Project Settings → General → Your apps
+        // Firebase Configuration
         const firebaseConfig = {
             apiKey: "AIzaSyBQp5dYHCo8WoBgSCrjsTNYrm9I32Ge-oU",
             authDomain: "dcchlone.firebaseapp.com",
@@ -443,8 +515,10 @@
         let isConnected = false;
         let isMuted = false;
         let friends = [];
+        let pendingRequests = [];
         let localStream = null;
         let peerConnections = {};
+        let friendRequestListener = null;
 
         // Authentication Functions
         async function signUp() {
@@ -538,6 +612,8 @@
             document.getElementById('current-user-name').textContent = currentUser.displayName;
             
             loadFriends();
+            loadPendingRequests();
+            setupFriendRequestListener();
         }
 
         function showError(message) {
@@ -601,20 +677,49 @@
         function loadFriends() {
             const container = document.getElementById('friends-container');
             
-            if (friends.length === 0) {
-                container.innerHTML = '<p>No friends yet. Add some friends to voice chat!</p>';
-                return;
-            }
+            if (firebaseEnabled) {
+                // Load friends from Firebase
+                firebase.database().ref(`users/${currentUser.uid}/friends`).on('value', (snapshot) => {
+                    const friendsData = snapshot.val();
+                    if (friendsData) {
+                        const acceptedFriends = Object.keys(friendsData).filter(id => friendsData[id].status === 'accepted');
+                        if (acceptedFriends.length > 0) {
+                            container.innerHTML = acceptedFriends.map(friendId => {
+                                const friend = friendsData[friendId];
+                                return `
+                                    <div class="friend-item">
+                                        <div>
+                                            <span class="status-online"></span>
+                                            ${friend.displayName}
+                                        </div>
+                                        <span style="font-size: 12px; color: #666;">Online</span>
+                                    </div>
+                                `;
+                            }).join('');
+                        } else {
+                            container.innerHTML = '<p>No friends yet. Send some friend requests!</p>';
+                        }
+                    } else {
+                        container.innerHTML = '<p>No friends yet. Send some friend requests!</p>';
+                    }
+                });
+            } else {
+                // Demo mode
+                if (friends.length === 0) {
+                    container.innerHTML = '<p>No friends yet. Send some friend requests!</p>';
+                    return;
+                }
 
-            container.innerHTML = friends.map(friend => `
-                <div class="friend-item">
-                    <div>
-                        <span class="status-${friend.online ? 'online' : 'offline'}"></span>
-                        ${friend.displayName}
+                container.innerHTML = friends.map(friend => `
+                    <div class="friend-item">
+                        <div>
+                            <span class="status-${friend.online ? 'online' : 'offline'}"></span>
+                            ${friend.displayName}
+                        </div>
+                        <span style="font-size: 12px; color: #666;">${friend.online ? 'Online' : 'Offline'}</span>
                     </div>
-                    <span style="font-size: 12px; color: #666;">${friend.online ? 'Online' : 'Offline'}</span>
-                </div>
-            `).join('');
+                `).join('');
+            }
         }
 
         // Voice Chat Functions
